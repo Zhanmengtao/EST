@@ -4,8 +4,6 @@
 #version 0.9.3	Script to write out tables for R, replacement for doing with perl (this is over 25X more effecient)
 #version 0.9.5	Fixed a problem where non text characters in SDF name would cause program to crash
 
-use GD::Graph::boxplot;
-use GD;
 use Getopt::Long;
 use Statistics::R;
 use Data::Dumper;
