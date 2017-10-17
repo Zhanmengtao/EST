@@ -248,15 +248,6 @@ if (defined $buildEna and $buildEna) {
     logprint "#PARSING TAXONOMY FILE\n";
     my $taxJobId = submitTaxonomyJob($S->getBuilder(), $unzipJobId, $fileNum++);
     
-    logprint "#FORMAT BLAST DATABASE\n";
-    my $splitJobId = submitSplitFastaJob($S->getBuilder(), $unzipJobId, $np, $PdbBuildDir, $fileNum++);
-    
-    logprint "#DO PDB BLAST\n";
-    my $blastJobId = submitBlastJob($S->getBuilder(), $splitJobId, $np, $PdbBuildDir, $fileNum++);
-    
-    logprint "#CAT BLAST FILES\n";
-    my $catJobId = submitCatBlastJob($S->getBuilder(), $blastJobId, $PdbBuildDir, $fileNum++);
-    
     # Chop up xml files so we can parse them easily
     logprint "#CHOP MATCH_COMPLETE AND .TAB FILES\n";
     my $ffJobId = submitFinalFileJob($S->getBuilder(), $unzipJobId, $fileNum++);
@@ -270,12 +261,22 @@ if (defined $buildEna and $buildEna) {
     
     # Create family_counts table
     logprint "#CREATING FAMILY COUNTS TABLE\n";
-    my $countJobId = submitBuildCountsJob($S->getBuilder(), $unzipJobId, $fileNum++);
+    my $countJobId = submitBuildCountsJob($S->getBuilder(), $ffJobId, $fileNum++);
     
     # Create uniref table
     logprint "#CREATING UNIREF TABLE\n";
     my $unirefJobId = submitBuildUnirefJob($S->getBuilder(), $unzipJobId, $fileNum++);
-}
+
+    # We try to do this after everything else has completed so that we don't hog the queue.
+    logprint "#FORMAT BLAST DATABASE\n";
+    my $splitJobId = submitFormatDbAndSplitFastaJob($S->getBuilder(), $structJobId, $np, $PdbBuildDir, $fileNum++);
+    
+    logprint "#DO PDB BLAST\n";
+    my $blastJobId = submitBlastJob($S->getBuilder(), $splitJobId, $np, $PdbBuildDir, $fileNum++);
+    
+    logprint "#CAT BLAST FILES\n";
+    my $catJobId = submitCatBlastJob($S->getBuilder(), $blastJobId, $PdbBuildDir, $fileNum++);
+}   
 
 
 
@@ -342,7 +343,7 @@ sub submitEnaJob {
         
         $B->addAction("gunzip -r $enaInputDir");
         $B->addAction("date > $CompletedFlagFile.unzip_ena\n");
-        $B->addAction("$ScriptDir/make_ena_table.pl -embl $enaInputDir -pro $enaDir/pro.tab -env $enaDir/env.tab -fun $enaDir/fun.tab -com $enaDir/com.tab -pfam $OutputDir/PFAM.tab -org $OutputDir/organism.tab -log $BuildDir/make_ena_table.log");
+        $B->addAction("$ScriptDir/make_ena_table.pl -embl $enaInputDir -pro $enaDir/pro.tab -env $enaDir/env.tab -fun $enaDir/fun.tab -com $enaDir/com.tab -pfam $OutputDir/PFAM.tab -org $OutputDir/organism.tab -idmapping $OutputDir/idmapping.tab -log $BuildDir/make_ena_table.log");
         $B->addAction("date > $CompletedFlagFile.make_ena_table\n");
         $B->addAction("cat $enaDir/env.tab $enaDir/fun.tab $enaDir/pro.tab > $OutputDir/ena.tab");
         $B->addAction("date > $CompletedFlagFile.cat_ena\n");
@@ -405,7 +406,7 @@ sub submitBuildCountsJob {
     $B->addAction("module load $PerlMod");
     
     if (not $skipIfExists or not -f "$OutputDir/family_counts.tab") {
-        $B->addAction("$ScriptDir/count_families.pl -input $OutputDir/PFAM.tab -output $OutputDir/family_counts.tab -type PFAM -merge-domain");
+        $B->addAction("$ScriptDir/count_families.pl -input $OutputDir/PFAM.tab -output $OutputDir/family_counts.tab -type PFAM -merge-domain -clans $InputDir/Pfam-A.clans.tsv");
         $B->addAction("$ScriptDir/count_families.pl -input $OutputDir/INTERPRO.tab -output $OutputDir/family_counts.tab -type INTERPRO -merge-domain -append");
         $B->addAction("$ScriptDir/count_families.pl -input $OutputDir/GENE3D.tab -output $OutputDir/family_counts.tab -type GENE3D -merge-domain -append");
         $B->addAction("$ScriptDir/count_families.pl -input $OutputDir/SSF.tab -output $OutputDir/family_counts.tab -type SSF -merge-domain -append");
@@ -428,6 +429,7 @@ sub submitBuildUnirefJob {
 
     my $file = "$BuildDir/$fileNum-buildUniref.sh";
     $B->dependency(0, $depId);
+    $B->resource(1, 1, "350gb");
     
     addLibxmlIfNecessary($B);
     $B->addAction("module load $PerlMod");
@@ -456,7 +458,7 @@ sub submitBuildUnirefJob {
 }
 
 
-sub submitSplitFastaJob {
+sub submitFormatDbAndSplitFastaJob {
     my ($B, $depId, $np, $pdbBuildDir, $fileNum) = @_;
 
     my $file = "$BuildDir/$fileNum-splitfasta.sh";
@@ -682,7 +684,7 @@ sub submitUnzipJob {
         # If there was an error (e.g. bad gz) then there will be one or more .gz files in the dir.
         # If that is the case we exit with an error code of 1 which will cause all of the dependent
         # jobs to abort.
-        $B->addAction("NUM_GZ=`ls -l $InputDir/*.gz | wc -l`");
+        $B->addAction("NUM_GZ=`ls -l $InputDir | grep '\.gz\s*$' | wc -l`");
         $B->addAction("if (( \$NUM_GZ > 0 ));");
         $B->addAction("then");
         $B->addAction("    exit 1");
